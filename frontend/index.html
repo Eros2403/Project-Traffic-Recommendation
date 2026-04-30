@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>Gợi ý giao thông thông minh</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; }
+        .container { display: flex; height: 100vh; }
+        .sidebar { width: 380px; background: white; padding: 20px; overflow-y: auto; box-shadow: 2px 0 10px rgba(0,0,0,0.1); z-index: 10; }
+        .sidebar h2 { color: #007bff; margin-bottom: 20px; }
+        .input-group { margin-bottom: 15px; }
+        .input-group label { display: block; font-weight: 600; margin-bottom: 5px; }
+        .input-group input { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 6px; }
+        button { background: #007bff; color: white; border: none; padding: 10px; border-radius: 6px; cursor: pointer; width: 100%; margin-top: 10px; font-weight: bold; }
+        button:hover { background: #0056b3; }
+        .btn-outline { background: white; color: #007bff; border: 1px solid #007bff; }
+        .btn-outline:hover { background: #007bff; color: white; }
+        .btn-live { background: #28a745; }
+        .btn-live:hover { background: #218838; }
+        .map-select-btn { margin-top: 5px; background: #6c757d; }
+        .route-list { margin-top: 20px; border-top: 1px solid #eee; padding-top: 15px; }
+        .route-card { background: #f8f9fa; padding: 12px; margin-bottom: 10px; border-radius: 8px; cursor: pointer; border-left: 4px solid #007bff; }
+        .route-card:hover { background: #e9ecef; transform: translateX(3px); }
+        .route-title { font-weight: bold; display: flex; justify-content: space-between; }
+        .route-detail { font-size: 0.85rem; color: #555; margin-top: 5px; }
+        .map-container { flex: 1; position: relative; }
+        #map { height: 100%; width: 100%; background: #e9ecef; }
+        .info-banner { position: absolute; bottom: 20px; left: 20px; background: rgba(0,0,0,0.7); color: white; padding: 5px 12px; border-radius: 20px; font-size: 0.8rem; z-index: 1000; }
+        .loading { font-size: 0.8rem; color: #666; margin-top: 5px; }
+        .status { font-size: 0.8rem; color: #007bff; margin-top: 5px; }
+        .autocomplete-container { position: relative; }
+        .autocomplete-suggestions { position: absolute; top: 100%; left: 0; right: 0; background: white; border: 1px solid #ddd; border-top: none; max-height: 200px; overflow-y: auto; z-index: 1000; border-radius: 0 0 6px 6px; }
+        .suggestion-item { padding: 8px 12px; cursor: pointer; border-bottom: 1px solid #f0f0f0; }
+        .suggestion-item:hover { background: #e9ecef; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="sidebar">
+        <h2>🚦 GỢI Ý GIAO THÔNG</h2>
+        <div class="input-group">
+            <label>📍 Điểm đi</label>
+            <div class="autocomplete-container">
+                <input type="text" id="originAddr" placeholder="Nhập địa chỉ hoặc địa danh">
+                <div id="originSuggestions" class="autocomplete-suggestions" style="display:none"></div>
+            </div>
+            <div id="originLoading" class="loading"></div>
+            <button id="selectOriginBtn" class="btn-outline map-select-btn">🗺️ Chọn trên bản đồ</button>
+            <button id="useMyLocationBtn" class="btn-live" style="margin-top:5px;">📍 Dùng vị trí của tôi</button>
+            <div id="locationStatus" class="loading"></div>
+        </div>
+        <div class="input-group">
+            <label>📍 Điểm đến</label>
+            <div class="autocomplete-container">
+                <input type="text" id="destAddr" placeholder="Nhập địa chỉ hoặc địa danh">
+                <div id="destSuggestions" class="autocomplete-suggestions" style="display:none"></div>
+            </div>
+            <div id="destLoading" class="loading"></div>
+            <button id="selectDestBtn" class="btn-outline map-select-btn">🗺️ Chọn trên bản đồ</button>
+        </div>
+        <button id="planBtn">🚗 Tìm đường & Gợi ý</button>
+        <div class="route-list">
+            <h3>📋 Các tuyến đường gợi ý</h3>
+            <div id="routeContainer"><p>Nhập điểm đi/đến và nhấn "Tìm đường"</p></div>
+        </div>
+        <button id="fetchLiveBtn" class="btn-live">🔄 Lấy dữ liệu thời gian thực</button>
+        <div id="liveMsg" style="margin-top:10px; color:#666;"></div>
+        <div style="margin-top:20px;">
+            <a href="/data_management"><button class="btn-outline" style="width:100%">📊 Quản lý dữ liệu</button></a>
+            <a href="/analysis"><button class="btn-outline" style="width:100%; margin-top:10px">📈 Phân tích & Báo cáo</button></a>
+        </div>
+    </div>
+    <div class="map-container">
+        <div id="map"></div>
+        <div class="info-banner" id="mapInfo">Nhập điểm đi, điểm đến</div>
+    </div>
+</div>
+<script>
+    var map = L.map('map').setView([10.7769,106.7009],12);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap'}).addTo(map);
+    let currentLines = [];
+    function clearMap(){ currentLines.forEach(l=>map.removeLayer(l)); currentLines=[]; }
+    window._cachedCoords = {};
+
+    // Autocomplete 
+    async function setupAutocomplete(inputId,suggestId){
+        const input=document.getElementById(inputId);
+        const suggestDiv=document.getElementById(suggestId);
+        if(!input||!suggestDiv) return;
+        let timer;
+        input.addEventListener('input',function(){
+            clearTimeout(timer);
+            const q=this.value.trim();
+            if(q.length<2){ suggestDiv.innerHTML=''; suggestDiv.style.display='none'; return; }
+            timer=setTimeout(async()=>{
+                try{
+                    const res=await fetch(`/api/autocomplete?query=${encodeURIComponent(q)}`);
+                    const data=await res.json();
+                    suggestDiv.innerHTML='';
+                    if(!data.length){ suggestDiv.style.display='none'; return; }
+                    data.forEach(item=>{
+                        const div=document.createElement('div');
+                        div.className='suggestion-item';
+                        div.textContent=item.display_name;
+                        div.onclick=()=>{
+                            input.value=item.display_name;
+                            suggestDiv.innerHTML='';
+                            suggestDiv.style.display='none';
+                            window._cachedCoords[inputId]={lat:item.lat,lon:item.lon};
+                            const loadingId=inputId==='originAddr'?'originLoading':'destLoading';
+                            document.getElementById(loadingId).innerHTML=`✅ ${item.display_name.slice(0,50)}`;
+                        };
+                        suggestDiv.appendChild(div);
+                    });
+                    suggestDiv.style.display='block';
+                }catch(e){ console.error(e); suggestDiv.style.display='none'; }
+            },300);
+        });
+        document.addEventListener('click',(e)=>{
+            if(!suggestDiv.contains(e.target) && e.target!==input) suggestDiv.style.display='none';
+        });
+    }
+    setupAutocomplete('originAddr','originSuggestions');
+    setupAutocomplete('destAddr','destSuggestions');
+
+    // Geocode
+    async function geocodeAddress(address,loadingId){
+        if(!address) throw new Error('Địa chỉ trống');
+        const ld=document.getElementById(loadingId);
+        if(ld) ld.innerText='Đang tìm...';
+        try{
+            const res=await fetch(`/api/geocode?address=${encodeURIComponent(address)}`);
+            const data=await res.json();
+            if(data.error) throw new Error(data.error);
+            if(ld) ld.innerText=`✅ ${data.display_name.slice(0,50)}`;
+            return {lat:data.lat, lon:data.lon};
+        }catch(e){
+            if(ld) ld.innerText='❌ Không tìm thấy';
+            throw e;
+        }
+    }
+
+    // Chọn điểm trên bản đồ
+    let selectingFor=null;
+    const selectOrigin=document.getElementById('selectOriginBtn');
+    const selectDest=document.getElementById('selectDestBtn');
+    const mapStatus=document.createElement('div'); mapStatus.className='status'; mapStatus.id='mapStatus';
+    document.querySelector('.sidebar').appendChild(mapStatus);
+    selectOrigin.onclick=()=>{ selectingFor='origin'; mapStatus.innerText='🔍 Click bản đồ chọn điểm đi'; };
+    selectDest.onclick=()=>{ selectingFor='dest'; mapStatus.innerText='🔍 Click bản đồ chọn điểm đến'; };
+    map.on('click',async(e)=>{
+        if(!selectingFor) return;
+        const {lat,lng}=e.latlng;
+        const marker=L.marker([lat,lng]).addTo(map);
+        setTimeout(()=>map.removeLayer(marker),3000);
+        mapStatus.innerText='Đang lấy địa chỉ...';
+        try{
+            const res=await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`);
+            const data=await res.json();
+            let address=data.display_name||`${lat.toFixed(5)},${lng.toFixed(5)}`;
+            if(selectingFor==='origin'){
+                document.getElementById('originAddr').value=address;
+                window._cachedCoords['originAddr']={lat,lon:lng};
+                document.getElementById('originLoading').innerHTML=`✅ ${address.slice(0,50)}`;
+            }else{
+                document.getElementById('destAddr').value=address;
+                window._cachedCoords['destAddr']={lat,lon:lng};
+                document.getElementById('destLoading').innerHTML=`✅ ${address.slice(0,50)}`;
+            }
+            selectingFor=null;
+            mapStatus.innerText='';
+        }catch(err){ mapStatus.innerText='❌ Lỗi'; console.error(err); selectingFor=null; }
+    });
+
+    // Dùng vị trí GPS
+    const useMyLocationBtn = document.getElementById('useMyLocationBtn');
+    const locationStatusDiv = document.getElementById('locationStatus');
+    if (useMyLocationBtn) {
+        useMyLocationBtn.onclick = () => {
+            if (!navigator.geolocation) {
+                locationStatusDiv.innerText = '❌ Trình duyệt không hỗ trợ định vị.';
+                return;
+            }
+            locationStatusDiv.innerText = '📍 Đang lấy vị trí...';
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    const { latitude: lat, longitude: lng } = position.coords;
+                    locationStatusDiv.innerText = `✅ ${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+                    document.getElementById('originAddr').value = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+                    window._cachedCoords['originAddr'] = { lat, lon: lng };
+                    L.marker([lat, lng]).addTo(map).bindPopup('Điểm đi (GPS)').openPopup();
+                    map.setView([lat, lng], 15);
+                    setTimeout(() => locationStatusDiv.innerText = '', 3000);
+                },
+                (error) => {
+                    let msg = '';
+                    switch(error.code) {
+                        case error.PERMISSION_DENIED: msg = '❌ Bạn đã từ chối cấp quyền vị trí. Hãy cấp quyền (biểu tượng ổ khóa).'; break;
+                        case error.POSITION_UNAVAILABLE: msg = '⚠️ Không thể xác định vị trí.'; break;
+                        case error.TIMEOUT: msg = '⏰ Quá thời gian chờ.'; break;
+                        default: msg = '⚠️ Lỗi: ' + error.message;
+                    }
+                    locationStatusDiv.innerText = msg;
+                    setTimeout(() => locationStatusDiv.innerText = '', 5000);
+                },
+                { enableHighAccuracy: true, timeout: 15000 }
+            );
+        };
+    }
+
+    // Hiển thị tuyến đường
+    function displayRoutes(routes){
+        const cont=document.getElementById('routeContainer');
+        if(!routes.length){ cont.innerHTML='<p>Không tìm thấy tuyến</p>'; return; }
+        let html='';
+        routes.forEach((r,i)=>{
+            html+=`<div class="route-card" data-idx="${i}"><div class="route-title"><span>🚗 Tuyến ${i+1}</span><span>⏱ ${r.time} phút</span></div><div class="route-detail">📏 ${r.distance} km</div></div>`;
+        });
+        cont.innerHTML=html;
+        document.querySelectorAll('.route-card').forEach(card=>{
+            card.onclick=()=>{
+                const idx=card.dataset.idx;
+                const route=routes[idx];
+                if(route.coordinates){
+                    clearMap();
+                    const poly=L.polyline(route.coordinates,{color:'#ff5722',weight:5}).addTo(map);
+                    currentLines.push(poly);
+                    map.fitBounds(poly.getBounds());
+                    document.getElementById('mapInfo').innerHTML=`Tuyến ${parseInt(idx)+1}: ${route.time} phút, ${route.distance} km`;
+                }
+            };
+        });
+    }
+
+    // TÌM ĐƯỜNG (đảm bảo có originStr, destStr)
+    async function planRoute(){
+        const originAddr = document.getElementById('originAddr').value.trim();
+        const destAddr = document.getElementById('destAddr').value.trim();
+        if(!originAddr || !destAddr){ alert('Nhập đủ điểm đi/đến'); return; }
+        document.getElementById('mapInfo').innerHTML='Đang xử lý...';
+        document.getElementById('routeContainer').innerHTML='<p>Đang tìm đường...</p>';
+        try{
+            let originCoord = window._cachedCoords['originAddr'];
+            if(!originCoord) originCoord = await geocodeAddress(originAddr,'originLoading');
+            let destCoord = window._cachedCoords['destAddr'];
+            if(!destCoord) destCoord = await geocodeAddress(destAddr,'destLoading');
+            
+            // ĐỊNH NGHĨA originStr VÀ destStr
+            const originStr = `${originCoord.lat},${originCoord.lon}`;
+            const destStr = `${destCoord.lat},${destCoord.lon}`;
+            const url = `/api/routes-between?origin=${originStr}&dest=${destStr}&origin_addr=${encodeURIComponent(originAddr)}&dest_addr=${encodeURIComponent(destAddr)}`;
+            const res = await fetch(url);
+            const data = await res.json();
+            if(data.error) throw new Error(data.error);
+            if(!data.length) throw new Error('Không có tuyến');
+            displayRoutes(data);
+            if(data[0]?.coordinates){
+                clearMap();
+                const poly = L.polyline(data[0].coordinates,{color:'#007bff',weight:5}).addTo(map);
+                currentLines.push(poly);
+                map.fitBounds(poly.getBounds());
+                document.getElementById('mapInfo').innerHTML=`Tuyến 1: ${data[0].time} phút, ${data[0].distance} km`;
+            }
+        }catch(e){ alert('Lỗi: '+e.message); document.getElementById('routeContainer').innerHTML='<p>Lỗi tìm đường</p>'; }
+    }
+
+    async function fetchLiveData() {
+        const msgDiv = document.getElementById('liveMsg');
+        msgDiv.innerText = 'Đang cập nhật từ TomTom...';
+        try{
+            await fetch('/api/fetch_now');
+            msgDiv.innerText = '✅ Cập nhật thành công';
+        }catch(e){ msgDiv.innerText = '❌ Lỗi cập nhật'; }
+        setTimeout(()=>msgDiv.innerText='',3000);
+    }
+
+    document.getElementById('planBtn').onclick = planRoute;
+    document.getElementById('fetchLiveBtn').onclick = fetchLiveData;
+</script>
+</body>
+</html>

@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>Phân tích dữ liệu giao thông</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; margin: 0; padding: 20px; }
+        .container { max-width: 1200px; margin: auto; background: white; padding: 20px; border-radius: 15px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { color: #007bff; }
+        .metric { background: #e9ecef; padding: 15px; border-radius: 8px; margin-bottom: 20px; text-align: center; }
+        .metric h2 { margin: 0; color: #28a745; }
+        .heatmap { text-align: center; margin-top: 30px; }
+        img { max-width: 100%; border: 1px solid #ddd; border-radius: 8px; background: #f4f4f4; }
+        .btn { background: #007bff; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; text-decoration: none; display: inline-block; margin-top: 10px; }
+        .btn:hover { background: #0056b3; }
+        .note { font-size: 0.8rem; color: #6c757d; margin-top: 10px; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>📈 Phân tích & Đánh giá hệ thống</h1>
+    <div class="metric">
+        <h2>📊 Độ chính xác dự báo (MAE)</h2>
+        <p id="maeValue" style="font-size: 1.2rem; font-weight: bold;">Đang tải...</p>
+        <p class="note">MAE (Mean Absolute Error) – chênh lệch trung bình giữa thực tế và dự báo. Giá trị càng nhỏ càng tốt.</p>
+    </div>
+
+    <div class="heatmap">
+        <h3>🔥 Biểu đồ nhiệt thời gian di chuyển trung bình theo giờ và tuyến</h3>
+        <img id="heatmapImg" src="/static/heatmap.png" alt="Heatmap" style="max-width:100%; max-height:500px; object-fit:contain;">
+        <div>
+            <button id="genHeatmapBtn" class="btn">🔄 Tạo mới biểu đồ nhiệt</button>
+        </div>
+        <div id="heatmapMsg" style="margin-top:10px; color:#28a745;"></div>
+    </div>
+
+    <div style="margin-top: 20px; text-align: center;">
+        <a href="/" class="btn">🏠 Về trang chủ</a>
+        <button id="refreshReportBtn" class="btn">🔄 Cập nhật báo cáo</button>
+    </div>
+</div>
+<script>
+    async function loadMAE() {
+        try {
+            const res = await fetch('/api/report');
+            if (!res.ok) throw new Error('Không thể tải báo cáo');
+            const data = await res.json();
+            const mae = data.mae !== undefined ? data.mae : 'Chưa có dữ liệu';
+            document.getElementById('maeValue').innerHTML = `${mae} phút`;
+        } catch (err) {
+            console.error(err);
+            document.getElementById('maeValue').innerHTML = 'Không thể tải dữ liệu.';
+        }
+    }
+
+async function generateHeatmap() {
+    const btn = document.getElementById('genHeatmapBtn');
+    const msgDiv = document.getElementById('heatmapMsg');
+    btn.disabled = true;
+    msgDiv.innerHTML = 'Đang tạo biểu đồ...';
+    try {
+        const res = await fetch('/api/generate-heatmap');   // GET mặc định
+        const data = await res.json();
+        if (data.status === 'ok') {
+            const img = document.getElementById('heatmapImg');
+            img.src = `/static/heatmap.png?t=${new Date().getTime()}`;
+            msgDiv.innerHTML = '✅ Biểu đồ đã được cập nhật!';
+        } else {
+            msgDiv.innerHTML = '❌ Lỗi: ' + (data.error || 'Không thể tạo biểu đồ');
+        }
+    } catch (err) {
+        msgDiv.innerHTML = '❌ Lỗi kết nối: ' + err.message;
+    } finally {
+        btn.disabled = false;
+        setTimeout(() => msgDiv.innerHTML = '', 4000);
+    }
+}
+
+    document.getElementById('genHeatmapBtn').addEventListener('click', generateHeatmap);
+    document.getElementById('refreshReportBtn').addEventListener('click', () => {
+        loadMAE();
+        generateHeatmap();
+    });
+    loadMAE();
+    // Tự động tạo heatmap lần đầu (nếu chưa có)
+    generateHeatmap();
+</script>
+</body>
+</html>

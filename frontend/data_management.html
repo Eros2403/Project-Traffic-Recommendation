@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>Quản lý dữ liệu & Lịch sử tìm kiếm</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; margin: 0; padding: 20px; }
+        .container { max-width: 1400px; margin: auto; background: white; padding: 20px; border-radius: 15px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { color: #007bff; }
+        .tabs { display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 1px solid #ccc; }
+        .tab-btn { background: #f1f1f1; border: none; padding: 10px 20px; cursor: pointer; border-radius: 8px 8px 0 0; font-weight: bold; }
+        .tab-btn.active { background: #007bff; color: white; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background: #007bff; color: white; }
+        tr:nth-child(even) { background: #f9f9f9; }
+        .btn { background: #007bff; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; margin-right: 10px; text-decoration: none; display: inline-block; }
+        .btn-danger { background: #dc3545; }
+        .btn-success { background: #28a745; }
+        .btn-warning { background: #ffc107; color: black; }
+        .form-container { background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 20px; display: none; }
+        .form-container input { margin: 5px 0; padding: 6px; width: calc(33% - 10px); }
+        .action-buttons { margin-bottom: 15px; }
+        .pagination { margin-top: 20px; text-align: center; }
+        .pagination button { background: #007bff; color: white; border: none; padding: 6px 12px; margin: 0 4px; border-radius: 4px; cursor: pointer; }
+        .pagination button.active { background: #0056b3; }
+        .pagination button:disabled { background: #ccc; cursor: not-allowed; }
+        .page-size { margin-left: 10px; padding: 5px; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>📊 Quản lý dữ liệu & Lịch sử tìm kiếm</h1>
+    <div class="tabs">
+        <button class="tab-btn active" data-tab="traffic">🚗 Dữ liệu giao thông</button>
+        <button class="tab-btn" data-tab="searchlog">🔍 Lịch sử tìm kiếm</button>
+    </div>
+
+    <!-- Tab Dữ liệu giao thông -->
+    <div id="tab-traffic" class="tab-content active">
+        <div class="action-buttons">
+            <button id="showAddFormBtn" class="btn btn-success">➕ Thêm bản ghi mới</button>
+            <button id="refreshTableBtn" class="btn">🔄 Làm mới</button>
+            <a href="/" class="btn">🏠 Về trang chủ</a>
+            <span style="float: right;">
+                Hiển thị 
+                <select id="pageSizeSelect" class="page-size">
+                    <option value="10">10</option>
+                    <option value="20" selected>20</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                </select>
+                bản ghi
+            </span>
+        </div>
+        <div id="addForm" class="form-container">
+            <h3>Thêm bản ghi mới</h3>
+            <input type="text" id="new_route_id" placeholder="Route ID (vd: A->B)">
+            <input type="text" id="new_timestamp" placeholder="Timestamp (YYYY-MM-DD HH:MM:SS)">
+            <input type="number" id="new_speed" placeholder="Speed (km/h)">
+            <input type="number" id="new_volume" placeholder="Vehicle volume">
+            <input type="number" id="new_travel_time" placeholder="Travel time (min)">
+            <button id="submitAddBtn" class="btn btn-success">Lưu</button>
+            <button id="cancelAddBtn" class="btn">Hủy</button>
+        </div>
+        <div style="overflow-x: auto;">
+            <table id="dataTable">
+                <thead>
+                    <tr><th>Route ID</th><th>Timestamp</th><th>Speed</th><th>Volume</th><th>Travel time</th><th>Hành động</th></tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+        <div class="pagination" id="pagination"></div>
+    </div>
+
+    <!-- Tab Lịch sử tìm kiếm -->
+    <div id="tab-searchlog" class="tab-content">
+        <div class="action-buttons">
+            <button id="refreshSearchLogBtn" class="btn">🔄 Làm mới lịch sử</button>
+            <button id="clearSearchLogBtn" class="btn btn-danger">🗑️ Xóa toàn bộ lịch sử</button>
+            <a href="/" class="btn">🏠 Về trang chủ</a>
+        </div>
+        <div style="overflow-x: auto;">
+            <table id="searchLogTable">
+                <thead>
+                    <tr>
+                        <th>Thời gian</th>
+                        <th>Điểm đi</th>
+                        <th>Điểm đến</th>
+                        <th>Tọa độ đi</th>
+                        <th>Tọa độ đến</th>
+                        <th>Các tuyến (thời gian - km)</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+        <div class="pagination" id="searchLogPagination"></div>
+    </div>
+</div>
+<script>
+    // ========== DỮ LIỆU GIAO THÔNG (traffic_data) ==========
+    let trafficData = [];
+    let currentPage = 1;
+    let pageSize = 20;
+
+    const apiUrl = '/api/data';
+
+    async function loadTrafficData() {
+        const res = await fetch(apiUrl);
+        trafficData = await res.json();
+        renderTrafficTable();
+        renderTrafficPagination();
+    }
+
+    function renderTrafficTable() {
+        const tbody = document.querySelector('#dataTable tbody');
+        tbody.innerHTML = '';
+        const start = (currentPage - 1) * pageSize;
+        const end = start + pageSize;
+        const pageData = trafficData.slice(start, end);
+        pageData.forEach(rec => {
+            const row = tbody.insertRow();
+            row.setAttribute('data-route', rec.route_id);
+            row.setAttribute('data-ts', rec.timestamp);
+            row.innerHTML = `
+                <td>${rec.route_id}</td>
+                <td>${rec.timestamp}</td>
+                <td>${rec.speed_kmh}</td>
+                <td>${rec.vehicle_volume}</td>
+                <td>${rec.travel_time_min}</td>
+                <td>
+                    <button class="editBtn btn btn-warning">✏️ Sửa</button>
+                    <button class="deleteBtn btn btn-danger">🗑️ Xóa</button>
+                </td>
+            `;
+        });
+        attachTrafficEvents();
+    }
+
+    function attachTrafficEvents() {
+        document.querySelectorAll('#dataTable .editBtn').forEach(btn => {
+            btn.removeEventListener('click', handleEdit);
+            btn.addEventListener('click', handleEdit);
+        });
+        document.querySelectorAll('#dataTable .deleteBtn').forEach(btn => {
+            btn.removeEventListener('click', handleDelete);
+            btn.addEventListener('click', handleDelete);
+        });
+    }
+
+    function handleEdit(e) {
+        const row = e.target.closest('tr');
+        const route = row.cells[0].innerText;
+        const ts = row.cells[1].innerText;
+        const speed = row.cells[2].innerText;
+        const vol = row.cells[3].innerText;
+        const travel = row.cells[4].innerText;
+        showEditForm(row, route, ts, speed, vol, travel);
+    }
+
+    async function handleDelete(e) {
+        if (!confirm('Xóa bản ghi này?')) return;
+        const row = e.target.closest('tr');
+        const route = row.cells[0].innerText;
+        const ts = row.cells[1].innerText;
+        await fetch('/api/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ route_id: route, timestamp: ts })
+        });
+        loadTrafficData();
+    }
+
+    function showEditForm(row, route, ts, speed, vol, travel) {
+        document.getElementById('addForm').style.display = 'none';
+        let editForm = document.getElementById('editForm');
+        if (!editForm) {
+            editForm = document.createElement('div');
+            editForm.id = 'editForm';
+            editForm.className = 'form-container';
+            editForm.innerHTML = `
+                <h3>Sửa bản ghi</h3>
+                <input type="text" id="edit_route_id" placeholder="Route ID">
+                <input type="text" id="edit_timestamp" placeholder="Timestamp">
+                <input type="number" id="edit_speed" placeholder="Speed">
+                <input type="number" id="edit_volume" placeholder="Volume">
+                <input type="number" id="edit_travel_time" placeholder="Travel time">
+                <button id="submitEditBtn" class="btn btn-success">Cập nhật</button>
+                <button id="cancelEditBtn" class="btn">Hủy</button>
+            `;
+            document.querySelector('.container').insertBefore(editForm, document.getElementById('dataTable'));
+        }
+        editForm.style.display = 'block';
+        document.getElementById('edit_route_id').value = route;
+        document.getElementById('edit_timestamp').value = ts;
+        document.getElementById('edit_speed').value = speed;
+        document.getElementById('edit_volume').value = vol;
+        document.getElementById('edit_travel_time').value = travel;
+        const submitBtn = document.getElementById('submitEditBtn');
+        const cancelBtn = document.getElementById('cancelEditBtn');
+        submitBtn.replaceWith(submitBtn.cloneNode(true));
+        cancelBtn.replaceWith(cancelBtn.cloneNode(true));
+        document.getElementById('submitEditBtn').addEventListener('click', async () => {
+            const newRecord = {
+                route_id: document.getElementById('edit_route_id').value,
+                timestamp: document.getElementById('edit_timestamp').value,
+                speed_kmh: parseFloat(document.getElementById('edit_speed').value),
+                vehicle_volume: parseInt(document.getElementById('edit_volume').value),
+                travel_time_min: parseFloat(document.getElementById('edit_travel_time').value)
+            };
+            await fetch('/api/update', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ old_route: route, old_timestamp: ts, new_record: newRecord })
+            });
+            editForm.style.display = 'none';
+            loadTrafficData();
+        });
+        document.getElementById('cancelEditBtn').addEventListener('click', () => {
+            editForm.style.display = 'none';
+        });
+    }
+
+    function renderTrafficPagination() {
+        const totalPages = Math.ceil(trafficData.length / pageSize);
+        const paginationDiv = document.getElementById('pagination');
+        paginationDiv.innerHTML = '';
+        const prev = document.createElement('button');
+        prev.innerHTML = '«';
+        prev.disabled = currentPage === 1;
+        prev.onclick = () => { if (currentPage > 1) { currentPage--; renderTrafficTable(); renderTrafficPagination(); } };
+        paginationDiv.appendChild(prev);
+        let startPage = Math.max(1, currentPage - 2);
+        let endPage = Math.min(totalPages, currentPage + 2);
+        for (let i = startPage; i <= endPage; i++) {
+            const btn = document.createElement('button');
+            btn.innerHTML = i;
+            if (i === currentPage) btn.classList.add('active');
+            btn.onclick = () => { currentPage = i; renderTrafficTable(); renderTrafficPagination(); };
+            paginationDiv.appendChild(btn);
+        }
+        const next = document.createElement('button');
+        next.innerHTML = '»';
+        next.disabled = currentPage === totalPages;
+        next.onclick = () => { if (currentPage < totalPages) { currentPage++; renderTrafficTable(); renderTrafficPagination(); } };
+        paginationDiv.appendChild(next);
+    }
+
+    document.getElementById('showAddFormBtn').addEventListener('click', () => {
+        const addForm = document.getElementById('addForm');
+        addForm.style.display = addForm.style.display === 'none' ? 'block' : 'none';
+        const editForm = document.getElementById('editForm');
+        if (editForm) editForm.style.display = 'none';
+    });
+    document.getElementById('cancelAddBtn').addEventListener('click', () => {
+        document.getElementById('addForm').style.display = 'none';
+    });
+    document.getElementById('submitAddBtn').addEventListener('click', async () => {
+        const newRecord = {
+            route_id: document.getElementById('new_route_id').value,
+            timestamp: document.getElementById('new_timestamp').value,
+            speed_kmh: parseFloat(document.getElementById('new_speed').value),
+            vehicle_volume: parseInt(document.getElementById('new_volume').value),
+            travel_time_min: parseFloat(document.getElementById('new_travel_time').value)
+        };
+        await fetch('/api/add', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(newRecord)
+        });
+        document.getElementById('addForm').style.display = 'none';
+        document.getElementById('new_route_id').value = '';
+        document.getElementById('new_timestamp').value = '';
+        document.getElementById('new_speed').value = '';
+        document.getElementById('new_volume').value = '';
+        document.getElementById('new_travel_time').value = '';
+        loadTrafficData();
+    });
+    document.getElementById('refreshTableBtn').addEventListener('click', loadTrafficData);
+    document.getElementById('pageSizeSelect').addEventListener('change', (e) => {
+        pageSize = parseInt(e.target.value);
+        currentPage = 1;
+        renderTrafficTable();
+        renderTrafficPagination();
+    });
+
+    // ========== LỊCH SỬ TÌM KIẾM (search_log) ==========
+    let searchLogData = [];
+    let searchLogPage = 1;
+    let searchLogPageSize = 20;
+
+    async function loadSearchLog() {
+        const res = await fetch('/api/search-log');
+        searchLogData = await res.json();
+        renderSearchLogTable();
+        renderSearchLogPagination();
+    }
+
+    function renderSearchLogTable() {
+        const tbody = document.querySelector('#searchLogTable tbody');
+        tbody.innerHTML = '';
+        const start = (searchLogPage - 1) * searchLogPageSize;
+        const end = start + searchLogPageSize;
+        const pageData = searchLogData.slice(start, end);
+        pageData.forEach(log => {
+            const row = tbody.insertRow();
+            row.innerHTML = `
+                <td>${log.timestamp}</td>
+                <td>${log.origin_address}</td>
+                <td>${log.dest_address}</td>
+                <td>${log.origin_lat}, ${log.origin_lon}</td>
+                <td>${log.dest_lat}, ${log.dest_lon}</td>
+                <td>${log.routes_summary}</td>
+            `;
+        });
+    }
+
+    function renderSearchLogPagination() {
+        const totalPages = Math.ceil(searchLogData.length / searchLogPageSize);
+        const paginationDiv = document.getElementById('searchLogPagination');
+        paginationDiv.innerHTML = '';
+        const prev = document.createElement('button');
+        prev.innerHTML = '«';
+        prev.disabled = searchLogPage === 1;
+        prev.onclick = () => { if (searchLogPage > 1) { searchLogPage--; renderSearchLogTable(); renderSearchLogPagination(); } };
+        paginationDiv.appendChild(prev);
+        let startPage = Math.max(1, searchLogPage - 2);
+        let endPage = Math.min(totalPages, searchLogPage + 2);
+        for (let i = startPage; i <= endPage; i++) {
+            const btn = document.createElement('button');
+            btn.innerHTML = i;
+            if (i === searchLogPage) btn.classList.add('active');
+            btn.onclick = () => { searchLogPage = i; renderSearchLogTable(); renderSearchLogPagination(); };
+            paginationDiv.appendChild(btn);
+        }
+        const next = document.createElement('button');
+        next.innerHTML = '»';
+        next.disabled = searchLogPage === totalPages;
+        next.onclick = () => { if (searchLogPage < totalPages) { searchLogPage++; renderSearchLogTable(); renderSearchLogPagination(); } };
+        paginationDiv.appendChild(next);
+    }
+
+    document.getElementById('refreshSearchLogBtn').addEventListener('click', loadSearchLog);
+    document.getElementById('clearSearchLogBtn').addEventListener('click', async () => {
+        if (confirm('Xóa toàn bộ lịch sử tìm kiếm?')) {
+            await fetch('/api/clear-search-log', { method: 'POST' });
+            loadSearchLog();
+        }
+    });
+
+    // ========== CHUYỂN TAB ==========
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            const tabName = btn.getAttribute('data-tab');
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            document.getElementById(`tab-${tabName}`).classList.add('active');
+            if (tabName === 'searchlog') loadSearchLog();
+        });
+    });
+
+    loadTrafficData();
+    loadSearchLog(); // load sẵn log khi mở trang
+</script>
+</body>
+</html>
